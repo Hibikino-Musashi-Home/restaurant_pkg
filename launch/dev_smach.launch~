@@ -1,0 +1,9 @@
+<!-- -*- mode: XML -*- -->
+<!-- 1Tab = 1Space -->
+
+<launch>
+  <node pkg="dev_smach" type="params.py" name="params" output="screen" />
+  <node pkg="dev_smach" type="speech_rec.py" name="speech_rec" output="screen" />
+
+  <node pkg="dev_smach" type="sm_restaurant.py" name="sm_restaurant" output="screen" />
+</launch>

@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import re
+import subprocess 
+
+argvs = sys.argv
+
+
+def Talk(str_talk, lang):
+	if lang == 'ja':
+		args = [
+			'open_jtalk',
+			'-x', '/usr/local/dic', #'/var/lib/mecab/dic/open-jtalk/naist-jdic/',
+			'-m', './MMDAgent_Example-1.4/Voice/mei/mei_normal.htsvoice', #相対パスにする
+			'-ow', 'output.wav' #相対パスにする
+		]
+	elif lang == 'en':
+		args = [
+			'flite_hts_engine',
+			'-m', './hts_voice_cmu_us_arctic_slt-1.05/cmu_us_arctic_slt.htsvoice', #相対パスにする
+			'-o', 'output.wav' #相対パスにする
+		]
+	else:
+		return 0
+
+	#wavファイルの生成
+	p = subprocess.Popen(args, stdin=subprocess.PIPE)
+	p.communicate(str_talk)
+	p.wait()
+
+	#wavファイルを再生
+	args = ['aplay', 'output.wav']
+	p = subprocess.Popen(args)
+	p.wait()
+  
+	return 0
+
+
+def DivideHalfFull(str_talk_full):
+	#str文字列からunicode文字列に変換し、リストにする
+	uni_char_list = list(str_talk_full.decode('utf-8'))
+
+	str_ja = ''
+	str_en = ''
+	#unicode文字列リストを1文字ずつ取り出す
+	for uni_char in uni_char_list:
+		#全角文字の場合
+		if ord(uni_char) > 255:
+			str_ja += uni_char.encode('utf-8')
+		#半角文字の場合
+		else:
+			str_en += uni_char.encode('utf-8')
+
+		#半角全角が入れ替わった場合
+		if len(str_ja) != 0 and len(str_en) != 0:
+			#これまで全角を取り出していたら日本語再生
+			if len(str_ja) > 1:
+				Talk(str_ja, 'ja')
+				str_ja = ''
+			#これまで半角を取り出していたら英語再生
+			else:
+				Talk(str_en, 'en')
+				str_en = ''
+
+	#最後の処理用
+	if len(str_ja) > 1:
+		Talk(str_ja, 'ja')
+	else:
+		Talk(str_en, 'en')
+
+
+if __name__ == '__main__':
+	Talk('This is a test message.', 'en')
+	Talk('これはテストメッセージです。', 'ja')
+	DivideHalfFull('ちんちんthat')

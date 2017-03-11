@@ -1,0 +1,37 @@
+#!/usr/bin/env python
+#coding:utf8
+
+#同じディレクトリに MMDAgent_Example-1.4 を置いておく必要あり
+#同じディレクトリに hts_voice_cmu_us_arctic_slt-1.05 を置いておく必要あり
+
+import subprocess
+
+def talk(text, lang) :
+  if lang is "jp":
+    args = [
+    "open_jtalk",
+    "-x", "/usr/local/dic", #"/var/lib/mecab/dic/open-jtalk/naist-jdic/",
+    "-m", "./MMDAgent_Example-1.4/Voice/mei/mei_normal.htsvoice",
+    "-ow", "output.wav"]
+  elif lang is "en":
+    args = [
+    "flite_hts_engine",
+    "-m", "./hts_voice_cmu_us_arctic_slt-1.05/cmu_us_arctic_slt.htsvoice",
+    "-o", "output.wav"]
+  else:
+    return 0
+
+  p = subprocess.Popen(args, stdin=subprocess.PIPE)
+  p.communicate(text)
+  p.wait()
+
+  args = [ "aplay", "output.wav"]
+  p = subprocess.Popen(args)
+  p.wait()
+  
+  return 0
+
+if __name__ == '__main__' :
+  #talk("私はエクシアです。九州工業大学のロボットです。", "jp")
+  talk("Okuchin", "en")
+  talk("ちんこ生える", "jp")

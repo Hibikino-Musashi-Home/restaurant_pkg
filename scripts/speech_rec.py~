@@ -1,0 +1,111 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+import rospy
+
+import actionlib
+
+from dev_smach_pkg.msg import SpeechRecAction
+from dev_smach_pkg.msg import SpeechRecFeedback
+from dev_smach_pkg.msg import SpeechRecResult
+
+import os
+import sys
+
+from subprocess import *
+
+
+#音声合成を現スレッドで起動(喋り終わるまで待つ)
+#半角文字は英語、全角文字は日本語で喋ります
+#例: SpeechSingle('This is English test message.これは日本語のテストメッセージです。')
+def SpeechSingle(speech_str):
+    if rospy.get_param('/params/dbg/sm/flow') == 0:
+        call(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+
+
+#音声合成を他スレッドで起動
+#半角文字は英語、全角文字は日本語で喋ります
+#例: SpeechMuiti('This is English test message.これは日本語のテストメッセージです。')
+def SpeechMulti(speech_str):
+    if rospy.get_param('/params/dbg/sm/flow') == 0:
+        Popen(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+
+
+class SpeechRec(object):
+    def __init__(self):
+        self._speech_rec_action_server = actionlib.SimpleActionServer('speech_rec_action', SpeechRecAction, execute_cb = self.speech_rec)
+        self._speech_rec_action_server.start()
+
+    def speech_rec(self, goal):
+        if goal.speech_rec_goal == 'SRec_StartFollow':
+            if rospy.get_param('/params/dbg/sm/flow') == 0:
+                #追跡開始の呼びかけを認識する
+                #[エクシア]
+                pass
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)
+        elif goal.speech_rec_goal == 'FollowWaiter':
+            if rospy.get_param('/params/dbg/sm/flow') == 0:
+                #追跡停止の呼びかけを認識する
+                #[止まって]                
+                pass
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)     
+        elif goal.speech_rec_goal == 'SRec_TablePos':
+            if rospy.get_param('/params/dbg/sm/flow') == 0:
+                #テーブル番号と位置を認識する
+                #[１番テーブル, ２番テーブル, ３番テーブル]
+                #[左, 右]
+                SpeechSingle('１番テーブルは左であっていますか？')
+                SpeechSingle('１番テーブルは左と覚えます。')
+                #rospy.set_param('/params/table/num', 0) #テーブル番号
+                #rospy.set_param('/params/table/lar', '') #テーブル位置 left right
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)     
+        elif goal.speech_rec_goal == 'SRec_WhichTableToAttend':
+            if rospy.get_param('/params/dbg/sm/flow') == 0:
+                #最初にオーダーをとるテーブル番号を認識
+                #[１番テーブル, ２番テーブル, ３番テーブル]                
+                SpeechSingle('どのテーブルまでオーダーをとりに行きますか？')
+                SpeechSingle('１番テーブルでよろしいですか？')
+                SpeechSingle('１番テーブルで注文をとります。')
+                #rospy.set_param('/params/order/firsttable', 0) #最初にオーダーをとるテーブル番号
+
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)
+        elif goal.speech_rec_goal == 'SRec_Order':
+            if rospy.get_param('/params/dbg/sm/flow') == 0:
+                #オーダーを認識
+                #[ビバレッジ、コンボのオブジェクト名]
+                SpeechSingle('ご注文は何ですか？')
+                SpeechSingle('ご注文はブラウンティーでよろしいですか？')
+                SpeechSingle('ほかに、ご注文はありますか？')
+                SpeechSingle('ご注文はチップスターとカップスターでよろしいですか？')
+                #オーダーされたオブジェクトをオブジェクト番号で記憶
+                #例: 1番目のオーダー(2番目のオーダーの場合は、リスト[0]をリスト[1]にする)
+                #order_obj = rospy.get_param('/params/order/obj')
+                #order_obj[0] = {'drink':0, 'combo1':0, 'combo2':0}
+                #rospy.set_param('/params/order/obj', order_obj)
+               
+            result = SpeechRecResult(speech_rec_result = True)
+            self._speech_rec_action_server.set_succeeded(result)    
+        else:
+            SpeechSingle('音声認識ノードエラー。ステートに対する処理が記述されていません。')
+            result = SpeechRecResult(speech_rec_result = False)
+            self._speech_rec_action_server.set_succeeded(result)
+
+
+if __name__ == '__main__':
+    node_name = os.path.basename(__file__)
+    node_name = node_name.split('.')
+    rospy.init_node(node_name[0])
+
+    speech_rec = SpeechRec()
+
+    r = rospy.Rate(30)
+    while not rospy.is_shutdown():
+        r.sleep()

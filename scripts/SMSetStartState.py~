@@ -1,0 +1,177 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import rospy
+from sensor_msgs.msg import Joy
+from tf.transformations import quaternion_from_euler
+from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+
+import tf
+
+import socket
+
+
+#グローバル変数
+buttons = [0] * 12
+joys = [0] * 4
+
+linearX = 0
+angularZ = 0
+
+VTraPad = 108 #最低:0[mm/s] 最高:360[mm/s] 1段階:36[mm/s](10段階) 限界700[mm/s]
+VRotPad = 12 #最低:0[deg/s] 最高:40[deg/s] 1段階:4[deg/s](10段階) 限界80[deg/s]
+
+buf_snd_mess = ""
+
+
+host = '172.17.65.208' #自PCのIPアドレス
+port = 60124 #ROSとWindowsでポート番号を揃える
+
+
+serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+serversock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+serversock.bind((host, port))
+serversock.listen(1)
+print '[INFO]: Waiting for Windows Connection'
+clientsock, client_address = serversock.accept()
+
+
+def Subf_elecom_pad(elecom_pad):
+	global buttons, joys
+
+	buttons[0] = elecom_pad.buttons[0] #コントローラ上の1
+	buttons[2] = elecom_pad.buttons[2] #コントローラ上の3
+	buttons[4] = elecom_pad.buttons[4] #コントローラ上の5
+	buttons[5] = elecom_pad.buttons[5] #コントローラ上の6
+	buttons[6] = elecom_pad.buttons[6] #コントローラ上の7
+	buttons[7] = elecom_pad.buttons[7] #コントローラ上の8
+	joys[0] = elecom_pad.axes[0] #左ジョイスティック左右
+	joys[1] = elecom_pad.axes[1] #左ジョイスティック下上
+
+
+def Subf_cmd_vel(cmd_vel):
+	global linearX, angularZ
+
+	linearX = cmd_vel.linear.x
+	angularZ = cmd_vel.angular.z
+
+
+def Generate_EXIA_snd_mess(count):
+	if count == 0:
+		return "PX"
+	else:	
+		global buttons, joys, linearX, angularZ, VTraPad, VRotPad
+
+		Vx = 0
+		Vy = 0
+		Vw = 0
+
+		if buttons[0] == 1:
+			Vx = 0
+			Vy = 0
+			Vw = 0			
+		elif buttons[2] == 1:
+			#速度調整機能
+			if buttons[6] == 1:
+				if VTraPad < 360:
+					VTraPad = VTraPad + 36
+				if VRotPad < 40:
+					VRotPad = VRotPad + 4
+			if buttons[7] == 1:
+				if VTraPad > 0:
+					VTraPad = VTraPad - 36
+				if VRotPad > 0:
+					VRotPad = VRotPad - 4
+
+			#回転運動命令の生成
+			if buttons[4] == 0:
+				if buttons[5] == 0:
+					Vw = 0
+				else:
+					Vw = VRotPad * -1
+			else:
+				if buttons[5] == 0:
+					Vw = VRotPad
+				else:
+					Vw = 0
+
+			#並進運動命令の生成
+			if abs(joys[1]) > 0.05:
+				Vx = joys[1] * VTraPad
+
+			if abs(joys[0]) > 0.05:
+				Vy = joys[0] * VTraPad * -1
+		elif abs(linearX) > 0.01 or abs(angularZ) > 0.1:
+			Vx = linearX * -1000
+			Vy = 0
+			Vw = angularZ * (180 / 3.14)
+
+		global buf_snd_mess
+		buf_snd_mess = "V," + str(Vx) + "," + str(Vy) + "," + str(Vw)
+
+		return "V," + str(Vx) + "," + str(Vy) + "," + str(Vw)
+
+
+def Comm_EXIA(EXIA_snd_mess, count):
+	global buf_snd_mess
+
+	#print EXIA_snd_mess
+	clientsock.sendall(EXIA_snd_mess)
+	EXIA_rcv_mess = clientsock.recv(1024)
+	#print EXIA_rcv_mess
+	if count == 0:
+		Pubf_odom(buf_snd_mess, EXIA_rcv_mess)
+
+
+def Pubf_odom(EXIA_snd_mess, EXIA_rcv_mess):
+
+	Pub_odom = rospy.Publisher('/odom', Odometry, queue_size = 1)
+
+	OdomData = Odometry()
+
+	VParams = EXIA_snd_mess.split(",")
+	OdomParams = EXIA_rcv_mess.split(",")
+	quaternion = quaternion_from_euler(0.0, 0.0, float(OdomParams[3]) * (3.14 / 180))
+
+	OdomData.header.stamp = rospy.get_rostime();
+	OdomData.header.frame_id = "odom";
+	
+	OdomData.pose.pose.position.x = (float(OdomParams[1]) / 1000) * -1
+	OdomData.pose.pose.position.y = float(OdomParams[2]) / 1000
+	OdomData.pose.pose.position.z = 0
+	OdomData.pose.pose.orientation.x = float(quaternion[0])
+	OdomData.pose.pose.orientation.y = float(quaternion[1])
+	OdomData.pose.pose.orientation.z = float(quaternion[2])
+	OdomData.pose.pose.orientation.w = float(quaternion[3])
+	OdomData.twist.twist.linear.x = (float(VParams[1]) / 1000) * -1
+	OdomData.twist.twist.linear.y = float(VParams[2]) / 1000
+	OdomData.twist.twist.linear.z = 0
+	OdomData.twist.twist.angular.x = 0
+	OdomData.twist.twist.angular.y = 0
+	OdomData.twist.twist.angular.z = float(VParams[3]) * (3.14 / 180)
+
+	Pub_odom.publish(OdomData)
+
+	pan12pan2 = tf.TransformBroadcaster()
+	pan12pan2.sendTransform(((float(OdomParams[1]) / 1000) * -1, float(OdomParams[2]) / 1000, 0), tf.transformations.quaternion_from_euler(0, 0, float(OdomParams[3]) * (3.14 / 180)), rospy.Time.now(), "base_link", "odom")
+
+if __name__ == '__main__':
+	rospy.init_node('EXIAContoroller', anonymous=True)
+
+	rospy.Subscriber("/elecom_pad", Joy, Subf_elecom_pad)
+	rospy.Subscriber("/cmd_vel", Twist, Subf_cmd_vel)
+
+	MainSleep = rospy.Rate(4)
+
+	count = 0
+	
+	while not rospy.is_shutdown():
+		if count < 2:
+			count = count + 1
+		else:
+			count = 0
+		Comm_EXIA(Generate_EXIA_snd_mess(count), count)
+		MainSleep.sleep()
+
+	clientsock.close()

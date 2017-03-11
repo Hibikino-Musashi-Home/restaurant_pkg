@@ -1,0 +1,691 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+#--------------------------------------------------
+#RCJ2016 Restaurant用ステートマシンのROSノード
+#
+#author: Yutaro ISHIDA
+#date: 16/03/03
+#--------------------------------------------------
+
+
+import sys
+import roslib
+sys.path.append(roslib.packages.get_pkg_dir('common_pkg') + '/scripts/common')
+
+from common_import import *
+from common_function import *
+
+
+rospy.sleep(5) #paramノードが立ち上がるまで待つ
+
+
+#--------------------------------------------------
+#ステートマシン設計規則
+#--------------------------------------------------
+#ステートを跨ぐデータはパラメータ(/param/以下)に保存する
+#
+#Img_ 画像処理
+#SRec_ 音声認識
+#SSyn_ 音声合成
+#SLAM_ SLAM・ナビゲーション
+#
+#音声認識アクションをステート内で叩く例(Feedbackが必要な時とか)
+#class HogeHoge(smach.State):
+#    def __init__(self):
+#        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+#        self._speech_rec_action_client = actionlib.SimpleActionClient('speech_rec_action', SpeechRecAction) #音声認識のActionClientを生成
+#        self._speech_rec_action_client.wait_for_server() #音声認識ノードのActionServerに接続
+#        self._feedback = [] #音声認識ノードから返ってくるフィードバック
+#
+#    def execute(self, userdata):
+#        dbg_sm_stepin()
+#
+#        goal = SpeechRecGoal() #ActionのGoalを生成
+#        goal.speech_rec_goal = self.__class__.__name__ #現在のステート名をGoalに設定
+#        self._speech_rec_action_client.send_goal(goal, feedback_cb = self.feedback) #音声認識ノードのActionServerにGoalを送信
+#
+#        #音声認識ノード終了後
+#        self._speech_rec_action_client.wait_for_result() #音声認識ノードのActionServerから終了が返って来るまで待つ
+#        if self._speech_rec_action_client.get_result().speech_rec_result == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+#            return 'exit1'
+#        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+#            return 'err_in_speech_rec'
+#
+#    def feedback(self, feedback):
+#        self._feedback = feedback
+#        #例: feedbackの送受信
+#        #音声認識ノードで以下のように送信       
+#        #feedback = SpeechRecFeedback(speech_rec_feedback = ['imte0','item1','item2'])
+#        #self._speech_rec_action_server.publish_feedback(feedback)
+#        #ステートマシンノードで以下を使って受信
+#        #self._feedback.speech_rec_feedback[0]
+#        #self._feedback.speech_rec_feedback[1]
+#        #self._feedback.speech_rec_feedback[2]
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class init(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class WaitStartSig(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        raw_input('#####Type enter key to start#####')
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SRec_StartFollow(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+        
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            commonf_dbg_sm_stepout()            
+            return 'exit1'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class Img_MemoWaiter(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+        
+        commonf_speech_single('１メートル前に立ってください。')
+        commonf_speech_single('あなたを記憶しました。')
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class FollowWaiter(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'exit2', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        #if rospy.get_param('/param/table/cnt') == 0: #キッチンから出発する時
+        #    pass
+        #elif rospy.get_param('/param/table/cnt') <= 2: #1個目、2個目のテーブルから出発する時
+        #    commonf_speech_single('追跡を再開します。１メートル前に立ってください。')
+        #else: #3個目のテーブルから出発する時
+        #    commonf_speech_single('３個の机の位置を覚えました。キッチンまで追跡を再開します。１メートル前に立ってください。')
+
+        Popen(['rosrun', 'common_pkg', 'img_followparson'])
+        rospy.sleep(10)
+                
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            commonf_node_killer('img_followparson')
+            commonf_pubf_cam_pan(0)
+            commonf_pubf_cam_tilt(0)
+            commonf_pubf_cmd_vel(0, 0, 0, 0, 0, 0)
+
+            if rospy.get_param('/param/table/cnt') < 3: #テーブルに到着した時
+                commonf_dbg_sm_stepout()
+                return 'exit1'
+            else: #キッチンに到着した時
+                commonf_dbg_sm_stepout()
+                return 'exit2'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SRec_TablePos(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            commonf_dbg_sm_stepout()
+            return 'exit1'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SLAM_RecordTablePos(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        call(['rosrun', 'restaurant_pkg', 'slam_recordtablepos.py'])
+
+        rospy.set_param('/param/table/cnt', rospy.get_param('/param/table/cnt') + 1)
+
+        commonf_dbg_sm_stepout() 
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SRec_WhichSideIsKitchen(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            commonf_dbg_sm_stepout()
+            return 'exit1'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SLAM_RecordKitchenPos(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        call(['rosrun', 'restaurant_pkg', 'slam_recordkitchenpos.py'])
+
+        commonf_dbg_sm_stepout() 
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SRec_WhichTableToAttend(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            commonf_dbg_sm_stepout()
+            return 'exit1'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SLAM_GoToOrder(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        table_pos = rospy.get_param('/param/table/pos')
+        order_cnt = rospy.get_param('/param/order/cnt')
+        order_table = rospy.get_param('/param/order/table')
+
+        commonf_actionf_move_base(table_pos[order_table[order_cnt] - 1]['x'], table_pos[order_table[order_cnt] - 1]['y'], table_pos[order_table[order_cnt] - 1]['yaw'])
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SRec_Order(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'err_in_speech_rec'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        commonf_actionf_cam_lift(0.455)
+        commonf_pubf_mic_tilt(0.174)
+
+        if commonf_actionf_speech_rec(self.__class__.__name__) == True: #音声認識ノードに現在のステートに対する処理が記述されていた時
+            rospy.set_param('/param/order/cnt', rospy.get_param('/param/order/cnt') + 1)
+            
+            commonf_pubf_mic_tilt(-0.349)
+            commonf_actionf_cam_lift(0.455)
+
+            commonf_dbg_sm_stepout()
+            return 'exit1'
+        else: #音声認識ノードに現在のステートに対する処理が記述されていない時
+            commonf_dbg_sm_stepout()            
+            return 'err_in_speech_rec'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class GoToKichen1(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'exit2'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        kitchen_pos = rospy.get_param('/param/kitchen/pos')
+
+        commonf_actionf_move_base(kitchen_pos['x'], kitchen_pos['y'], kitchen_pos['yaw'])
+
+        if rospy.get_param('/param/order/cnt') < 2:
+            commonf_dbg_sm_stepout()
+            return 'exit1'
+        else:
+            commonf_dbg_sm_stepout()
+            return 'exit2'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SSyn_RepeatOrder(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        order_cnt = rospy.get_param('/param/order/cnt')
+        order_table = rospy.get_param('/param/order/table')
+        order_obj = rospy.get_param('/param/order/obj')
+        obj_db = rospy.get_param('/param/obj/db')
+        
+        half2full = [u'０番', u'１番', u'２番', u'３番', u'Ａ', u'Ｂ', u'Ｃ']
+
+        if order_cnt == 1:
+            order_str = [half2full[order_table[0]] + u'テーブル、']
+            for order_id in range(0, 4):
+                if order_obj[0][order_id] != 0:
+                    order_str[0] += obj_db[order_obj[0][order_id] -1]['obj_name_j']  
+                    order_str[0] += u'、'
+            commonf_speech_single('バーマンさん。')
+            commonf_speech_single(order_str[0])
+            commonf_speech_single('で、お願いします。')
+        else:
+            order_str = [half2full[order_table[0]] + u'テーブル、', half2full[order_table[1]] + u'テーブル、']
+            for table_id in range(0, 2):
+                for order_id in range(0, 4):
+                    if order_obj[table_id][order_id] != 0:
+                        order_str[table_id] += obj_db[order_obj[table_id][order_id] -1]['obj_name_j']  
+                        order_str[table_id] += u'、'
+            commonf_speech_single('バーマンさん。')
+            commonf_speech_single(order_str[0])
+            commonf_speech_single(order_str[1])
+            commonf_speech_single('で、お願いします。')
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class ARM_Open(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+        
+        call(['rosrun', 'common_pkg', 'iarm_open.py'])
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class ApproachToDrink(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        call(['rosrun', 'common_pkg', 'approach_obj.py'])
+               
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class FindDrinkOrder(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'exit2'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+        
+        order_table = rospy.get_param('/param/order/table')
+        order_obj = rospy.get_param('/param/order/obj')
+        obj_db = rospy.get_param('/param/obj/db')
+
+        obj_cnt = 0
+        for table_id in range(0, 2):
+            for order_id in range(0, 4):
+                if order_obj[table_id][order_id] != 0:
+                    if obj_db[order_obj[table_id][order_id] - 1]['obj_class'] == 'drink':
+                        if rospy.get_param('/param/iarm/find/cnt') == obj_cnt:                            
+                            rospy.set_param('/param/iarm/find/cnt', rospy.get_param('/param/iarm/find/cnt') + 1)
+                            rospy.set_param('/param/iarm/obj/id', order_obj[table_id][order_id])
+
+                            rospy.set_param('/param/delivery/table', order_table[table_id])
+
+                            commonf_dbg_sm_stepout()
+                            return 'exit1'
+                        else:
+                            obj_cnt += 1
+        commonf_speech_single('オブジェクトを全て探し終わりました。')
+
+        commonf_dbg_sm_stepout()
+        return 'exit2'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class Img_FindDrink(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1', 'exit2'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        Popen(['rosrun', 'common_pkg', 'img_obj_rec.py'])
+
+        if call(['rosrun', 'common_pkg', 'img_obj_proc']) != 0:
+            commonf_dbg_sm_stepout()
+            return 'exit1'            
+        else:
+            commonf_node_killer('img_obj_rec')
+
+            commonf_dbg_sm_stepout()            
+            return 'exit2'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class ARM_GraspDrink(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        Popen(['roslaunch', 'common_pkg', 'ar_tracker.launch'])
+
+        call(['rosrun', 'common_pkg', 'iarm_grasp.py'])
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class BackFromDrink(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        commonf_speech_single('４５センチ後退。')
+        
+        commonf_pubf_cmd_vel(-0.15, 0, 0, 0, 0, 0)
+        rospy.sleep(3)
+        commonf_pubf_cmd_vel(0, 0, 0, 0, 0, 0)
+        
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class ARM_Close(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+        
+        call(['rosrun', 'common_pkg', 'iarm_close.py'])
+                
+        commonf_node_killer('ar_track_alvar')
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+        
+
+#--------------------------------------------------
+#--------------------------------------------------
+class SLAM_GoToDerively(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        table_pos = rospy.get_param('/param/table/pos')
+        order_table = rospy.get_param('/param/order/table')
+        delivery_table = rospy.get_param('/param/delivery/table')
+
+        commonf_actionf_move_base(table_pos[delivery_table - 1]['x'], table_pos[delivery_table - 1]['y'], table_pos[delivery_table - 1]['yaw'])
+        
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class ARM_Hand(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        call(['rosrun', 'common_pkg', 'iarm_hand.py'])
+
+        Popen(['roslaunch', 'common_pkg', 'ar_tracker.launch'])
+
+        call(['rosrun', 'common_pkg', 'iarm_close.py'])
+
+        commonf_node_killer('ar_track_alvar')
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+class GoToKichen2(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+
+    def execute(self, userdata):
+        commonf_dbg_sm_stepin()
+
+        kitchen_pos = rospy.get_param('/param/kitchen/pos')
+
+        commonf_actionf_move_base(kitchen_pos['x'], kitchen_pos['y'], kitchen_pos['yaw'])
+
+        commonf_dbg_sm_stepout()
+        return 'exit1'
+
+
+#--------------------------------------------------
+#--------------------------------------------------
+if __name__ == '__main__':
+    node_name = os.path.basename(__file__)
+    node_name = node_name.split('.')
+    rospy.init_node(node_name[0])
+
+
+    sm = smach.StateMachine(outcomes=['exit'])
+
+
+    #起動音を再生する
+    commonf_actionf_sound_effect_single('launch')
+
+
+    commonf_pubf_scan_mode('lrf')
+
+    commonf_pubf_cam_pan(0.523)
+    commonf_pubf_cam_tilt(0.523)
+    commonf_pubf_mic_pan(-0.523)
+    commonf_pubf_mic_tilt(-0.523)
+    rospy.sleep(0.5)
+    commonf_pubf_cam_pan(0)
+    commonf_pubf_cam_tilt(0)
+    commonf_pubf_mic_pan(0)
+    commonf_pubf_mic_tilt(-0.349)
+    rospy.sleep(0.5)
+
+    commonf_pubf_cmd_vel(0, 0, 0, 0, 0, 0)
+
+    commonf_actionf_cam_lift(0.555)
+
+
+    #ここで入力を促して、最初のステートのトランジションを決める
+    #commonf_speech_single('タスク、レストランをスタート。')
+    #commonf_speech_single('スタートステートを指定して下さい。')
+    rospy.loginfo('タスク、レストランをスタート')
+    rospy.loginfo('スタートステートを指定して下さい')
+
+    print '##### If you want to start from first state, please type enter key #####'
+    start_state = raw_input('##### Please Input First State Name ##### >> ')
+    if not start_state:
+        start_state = 'WaitStartSig'
+
+    #commonf_speech_single('ステートマシンをスタート。')
+    rospy.loginfo('ステートマシンをスタート')
+
+
+    with sm:
+        smach.StateMachine.add('init', init(), 
+                               transitions={'exit1':start_state})
+        smach.StateMachine.add('WaitStartSig', WaitStartSig(), 
+                               transitions={'exit1':'SRec_StartFollow'})
+        smach.StateMachine.add('SRec_StartFollow', SRec_StartFollow(), 
+                               transitions={'exit1':'Img_MemoWaiter',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('Img_MemoWaiter', Img_MemoWaiter(), 
+                               transitions={'exit1':'FollowWaiter'})
+        smach.StateMachine.add('FollowWaiter', FollowWaiter(), 
+                               transitions={'exit1':'SRec_TablePos',
+                                            'exit2':'SRec_WhichSideIsKitchen',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('SRec_TablePos', SRec_TablePos(), 
+                               transitions={'exit1':'SLAM_RecordTablePos',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('SLAM_RecordTablePos', SLAM_RecordTablePos(), 
+                               transitions={'exit1':'FollowWaiter'})
+        smach.StateMachine.add('SRec_WhichSideIsKitchen', SRec_WhichSideIsKitchen(), 
+                               transitions={'exit1':'SLAM_RecordKitchenPos',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('SLAM_RecordKitchenPos', SLAM_RecordKitchenPos(), 
+                               transitions={'exit1':'SRec_WhichTableToAttend'})
+        smach.StateMachine.add('SRec_WhichTableToAttend', SRec_WhichTableToAttend(), 
+                               transitions={'exit1':'SLAM_GoToOrder',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('SLAM_GoToOrder', SLAM_GoToOrder(), 
+                               transitions={'exit1':'SRec_Order'})
+        smach.StateMachine.add('SRec_Order', SRec_Order(), 
+                               transitions={'exit1':'GoToKichen1',
+                                            'err_in_speech_rec':'exit'})
+        smach.StateMachine.add('GoToKichen1', GoToKichen1(), 
+                               transitions={'exit1':'SRec_WhichTableToAttend',
+                                            'exit2':'SSyn_RepeatOrder'})
+        smach.StateMachine.add('SSyn_RepeatOrder', SSyn_RepeatOrder(), 
+                               transitions={'exit1':'ARM_Open'})
+        smach.StateMachine.add('ARM_Open', ARM_Open(), 
+                               transitions={'exit1':'ApproachToDrink'})
+        smach.StateMachine.add('ApproachToDrink', ApproachToDrink(), 
+                               transitions={'exit1':'FindDrinkOrder'})
+        smach.StateMachine.add('FindDrinkOrder', FindDrinkOrder(), 
+                               transitions={'exit1':'Img_FindDrink',
+                                            'exit2':'exit'})
+        smach.StateMachine.add('Img_FindDrink', Img_FindDrink(), 
+                               transitions={'exit1':'FindDrinkOrder',
+                                            'exit2':'ARM_GraspDrink'})
+        smach.StateMachine.add('ARM_GraspDrink', ARM_GraspDrink(), 
+                               transitions={'exit1':'BackFromDrink'})
+        smach.StateMachine.add('BackFromDrink', BackFromDrink(), 
+                               transitions={'exit1':'ARM_Close'})
+        smach.StateMachine.add('ARM_Close', ARM_Close(), 
+                               transitions={'exit1':'SLAM_GoToDerively'})
+        smach.StateMachine.add('SLAM_GoToDerively', SLAM_GoToDerively(), 
+                               transitions={'exit1':'ARM_Hand'})
+        smach.StateMachine.add('ARM_Hand', ARM_Hand(), 
+                               transitions={'exit1':'GoToKichen2'})
+        smach.StateMachine.add('GoToKichen2', GoToKichen2(), 
+                               transitions={'exit1':'ARM_Open'})
+
+
+    sis = smach_ros.IntrospectionServer('sm', sm, '/SM_ROOT')
+    sis.start()
+
+
+    outcome = sm.execute()
+
+
+    commonf_speech_single('タスクを終了します。')
+    raw_input('##### Type Ctrl + c key to end #####')
+
+
+    while not rospy.is_shutdown():
+        rospy.spin()

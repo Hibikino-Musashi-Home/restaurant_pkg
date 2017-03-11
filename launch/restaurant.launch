@@ -1,0 +1,6 @@
+<!-- -*- mode: XML -*- -->
+
+<launch>
+    <include file="$(find restaurant_pkg)/launch/sm_restaurant.launch"/>
+	<include file="$(find restaurant_pkg)/launch/rviz_restaurant.launch"/>
+</launch>

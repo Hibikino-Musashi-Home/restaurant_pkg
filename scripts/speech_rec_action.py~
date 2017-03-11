@@ -1,0 +1,34 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
+import rospy
+
+import actionlib
+
+from dev_smach_pkg.msg import SpeechRecAction
+from dev_smach_pkg.msg import SpeechRecFeedback
+from dev_smach_pkg.msg import SpeechRecResult
+
+
+class SpeechRec(object):
+    def __init__(self):
+        self._speech_rec_action_server = actionlib.SimpleActionServer('speech_rec_action', SpeechRecAction, execute_cb = self.speech_rec)
+        print 'hogehoge1'
+        self._speech_rec_action_server.start()
+        print 'hogehoge2'
+
+    def speech_rec(self, goal):
+        print goal
+
+        feedback = SpeechRecFeedback(speech_rec_feedback = ['feedback1', 'feedback2'])
+        self._speech_rec_action_server.publish_feedback(feedback)
+
+        result = SpeechRecResult(speech_rec_result = True)
+        self._speech_rec_action_server.set_succeeded(result)
+
+
+if __name__ == '__main__':
+    rospy.init_node('speech_rec_action')
+    speech_rec = SpeechRec()
+    rospy.spin()

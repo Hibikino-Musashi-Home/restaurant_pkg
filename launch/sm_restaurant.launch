@@ -1,0 +1,8 @@
+<!-- -*- mode: XML -*- -->
+
+<launch>
+    <node pkg="restaurant_pkg" type="param_restaurant.py" name="param_restaurant"/>
+    <node pkg="restaurant_pkg" type="speech_rec_restaurant.py" name="speech_rec_restaurant" output="screen"/>
+    <node pkg="restaurant_pkg" type="sm_restaurant.py" name="sm_restaurant" output="screen"/>
+    <node pkg="smach_viewer" type="smach_viewer.py" name="smach_viewer"/>
+</launch>

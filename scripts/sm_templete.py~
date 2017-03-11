@@ -1,0 +1,115 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import rospy
+
+import smach
+import smach_ros
+
+import actionlib
+
+from dev_smach_pkg.msg import SpeechRecAction
+from dev_smach_pkg.msg import SpeechRecGoal 
+
+from subprocess import *
+
+
+#音声#音声合成を現スレッドで起動(喋り終わるまで待つ)
+#半角文字は英語、全角文字は日本語で喋ります。
+#例: SpeechSingle('This is English test message.これは日本語のテストメッセージです。')合成を現スレッドで起動(喋り終わるまで待つ)
+def SpeechSingle(speech_str):
+    call(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+
+
+#音声合成を他スレッドで起動
+#半角文字は英語、全角文字は日本語で喋ります。
+#例: SpeechMuiti('This is English test message.これは日本語のテストメッセージです。')
+def SpeechMulti(speech_str):
+    Popen(['rosrun', 'common_pkg', 'speech_syn.py', speech_str])
+
+
+#----------ステートマシン設計規則----------
+#ステートを跨ぐデータはパラメータ(/params/以下)に保存する
+
+#Img_ 画像処理
+#SRec_ 音声認識
+#SLAM_ SLAM・ナビゲーション
+#Jun_ 分岐点
+
+
+class init(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+    def execute(self, userdata):
+        return 'exit1'
+
+
+class state1(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+        #音声認識はActionを介して実行します。
+        self._speech_rec_action_client = actionlib.SimpleActionClient('speech_rec_action', SpeechRecAction) #音声認識のActionClientを生成
+        self._speech_rec_action_client.wait_for_server() #音声認識のActionServerに接続
+        self._feedback = [] #音声認識ノードから返ってくるフィードバック
+
+    def execute(self, userdata):
+        #現在のステートを音声認識ノードに渡して、音声認識開始
+        goal = SpeechRecGoal()
+        goal.speech_rec_goal = 'SRec_StartFollow'
+        self._speech_rec_action_client.send_goal(goal, feedback_cb = self.feedback)
+
+        #音声認識ノードから返ってくるフィードバックは以下の変数に入っている
+        #self._feedback[0]
+
+        self._speech_rec_action_client.wait_for_result()
+        result = self._speech_rec_action_client.get_result()
+
+        return 'exit1'
+
+    def feedback(self, feedback):
+        self._feedback = feedback
+
+
+class state2(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['exit1'])
+
+    def execute(self, userdata):
+        #ノードを現スレッドで起動(cppも起動できます)
+        #call(['rosrun', 'hoge_pkg', 'piyo.py'])
+        #ノードを他スレッドで起動(cppも起動できます)
+        #Popen(['rosrun', 'hoge_pkg', 'piyo.py'])
+        return 'exit1'
+
+
+if __name__ == '__main__':
+    rospy.init_node('sm_templete')
+
+    sm = smach.StateMachine(outcomes=['exit'])
+
+    #ここで入力を促して、最初のステートのトランジションを決める
+    SpeechSingle('タスク、テンプレートをスタート。')
+    SpeechSingle('スタートステートを指定して下さい。')
+
+    state_name = raw_input('#####PleaseInputFirstStateName##### >> ')
+    if not state_name:
+	    state_name = "state1"
+
+    SpeechSingle('ステートマシンをスタート。')
+
+    with sm:
+        smach.StateMachine.add('init', init(), 
+                               transitions={'exit1':state_name})
+        smach.StateMachine.add('state1', state1(), 
+                               transitions={'exit1':'state2'})
+        smach.StateMachine.add('state2', state2(), 
+                               transitions={'exit1':'exit'})
+
+    sis = smach_ros.IntrospectionServer('sm', sm, '/SM_ROOT')
+    sis.start()
+
+    outcome = sm.execute()
+
+    while not rospy.is_shutdown():
+        rospy.spin()
